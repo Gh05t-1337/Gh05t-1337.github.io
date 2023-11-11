@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title>PhysicsSim</title>
+	<link href='favicon.ico' rel='icon'>
+</head>
+
+<body>
+
+<canvas id="myCanvas" style="border:2px solid"></canvas>
+
+<script>
+	// vector math -------------------------------------------------------
+
+	class Vector2 {
+		constructor(x = 0.0, y = 0.0) {
+			this.x = x; 
+			this.y = y;
+		}
+
+		set(v) {
+			this.x = v.x; this.y = v.y;
+		}
+
+		clone() {
+			return new Vector2(this.x, this.y);
+		}
+
+		add(v, s = 1.0) {
+			this.x += v.x * s;
+			this.y += v.y * s;
+			return this;
+		}
+
+		sub(other) {
+			return new Vector2(this.x-other.x,this.y-other.y);
+		}
+
+		times(scalar){
+			return new Vector2(this.x*scalar,this.y*scalar);
+		}
+		
+		divide(scalar){
+			return new Vector2(this.x/scalar,this.y/scalar);
+		}
+
+		length() {
+			return Math.sqrt(this.x * this.x + this.y * this.y);
+		}
+
+		dot(v) {
+			return this.x * v.x + this.y * v.y;
+		}
+
+		perp() {
+			return new Vector2(-this.y, this.x);
+		}		
+	}
+
+	// canvas setup -------------------------------------------------------
+	{
+		var canvas = document.getElementById("myCanvas");
+		var c = canvas.getContext("2d");
+
+		canvas.width = window.innerWidth - 20;
+		canvas.height = window.innerHeight - 100;
+
+		var simMinWidth = 20.0;
+		var cScale = Math.min(canvas.width, canvas.height) / simMinWidth;
+		var simWidth = canvas.width / cScale;
+		var simHeight = canvas.height / cScale;
+
+		function cX(pos) {
+			return pos.x * cScale;
+		}
+
+		function cY(pos) {
+			return canvas.height - pos.y * cScale;
+		}
+	}
+	
+	// CLASSES ------------------------------------------------------------
+
+	class Ball {
+        constructor(mass, radius, pos, vel, acc=new Vector2(0.0, 0.0), restitution=0.2) {
+            this.radius = radius;
+			this.mass = mass;
+			this.restitution = restitution;
+			this.pos = pos.clone();
+			this.vel = vel.clone();
+			this.acc = acc.clone()
+        }
+        simulate(dt) 
+        {
+			this.vel.add(this.acc, dt);
+			this.pos.add(this.vel, dt);
+
+			if (this.pos.x < 0.0) {
+				this.pos.x = 0.0;
+				this.vel.x = -this.vel.x;
+			}
+			if (this.pos.x > simWidth) {
+				this.pos.x = simWidth;
+				this.vel.x = -this.vel.x;
+			}
+			if (this.pos.y < 0.0) {
+				this.pos.y = 0.0;
+				this.vel.y = -this.vel.y;
+			}
+			/*if (this.pos.y > simHeight) {
+				this.pos.y = simHeight;
+				this.vel.y = -this.vel.y;
+			}*/
+        }
+        draw() {
+            c.beginPath();			
+			c.arc(
+				cX(this.pos), cY(this.pos), cScale * this.radius, 0.0, 2.0 * Math.PI); 
+			c.closePath();
+			c.fill();
+        }
+    }
+
+	class FixedSpring {
+		constructor(point, ball, stiffness=1.0, damping_par=1.0){
+			this.ball = ball;
+			this.point = point;
+			this.stiffness = stiffness;
+			this.damping_par = damping_par;
+			this.length = point.sub(ball.pos).length();
+		}
+		simulate(){
+			var relative_pos = this.point.sub(this.ball.pos);
+			var actual_length = relative_pos.length();
+			var normalized_dir = relative_pos.divide(actual_length);
+			var relative_vel = new Vector2(0.0, 0.0).sub(this.ball.vel);
+
+			var elastic_gen = this.stiffness/this.length * (actual_length - this.length);
+			var damping_gen = relative_vel.dot(normalized_dir) * this.damping_par;
+
+			//var elastic = new Vector2(0,0).add(normalized_dir,1/this.ball.mass * elastic_gen);
+			//var damping = new Vector2(0,0).add(normalized_dir, damping_gen * 1/this.ball.mass);
+			
+			var elastic = normalized_dir.times(1/this.ball.mass * elastic_gen);
+    		var damping = normalized_dir.times(damping_gen * 1/this.ball.mass);
+
+			var acc_ball = elastic.add(damping);
+
+			this.ball.acc.add(acc_ball);
+		}
+		draw(){
+			c.beginPath();
+			c.moveTo(cX(this.ball.pos), cY(this.ball.pos));
+			c.lineTo(cX(this.point), cY(this.point));
+			c.stroke();
+
+			// draw point
+			c.beginPath();			
+			c.arc(
+				cX(this.point), cY(this.point), cScale * 0.1, 0.0, 2.0 * Math.PI); 
+			c.closePath();
+			c.fill();
+		}
+	}
+
+	class Spring {
+		constructor(ball1, ball2, stiffness=1.0, damping_par = 1.0){
+			this.ball1 = ball1;
+			this.ball2 = ball2;
+			this.stiffness = stiffness;
+			this.damping_par = damping_par;
+			this.length = ball2.pos.sub(ball1.pos).length();
+		}
+		simulate(){
+			var relative_pos = this.ball2.pos.sub(this.ball1.pos);
+			var actual_length = relative_pos.length();
+			var normalized_dir1 = relative_pos.divide(actual_length);
+			var normalized_dir2 = relative_pos.divide(actual_length).times(-1.0);
+			var relative_vel = this.ball2.vel.sub(this.ball1.vel);
+
+			var elastic_gen = this.stiffness/this.length * (actual_length - this.length);
+			var damping_gen = relative_vel.dot(normalized_dir1) * this.damping_par;
+
+			var acc_ball1 = normalized_dir1.times(1/this.ball1.mass * elastic_gen).add(normalized_dir1.times(damping_gen * 1/this.ball1.mass));
+			var acc_ball2 = normalized_dir2.times(1/this.ball2.mass * elastic_gen).add(normalized_dir2.times(damping_gen * 1/this.ball2.mass));
+
+
+			this.ball1.acc.add(acc_ball1);
+			this.ball2.acc.add(acc_ball2);
+		}
+		draw(){
+			c.beginPath();
+			c.moveTo(cX(this.ball1.pos), cY(this.ball1.pos));
+			c.lineTo(cX(this.ball2.pos), cY(this.ball2.pos));
+
+			c.stroke();
+		}
+	}
+
+	// scene -------------------------------------------------------
+
+	var scene = {
+		gravity : new Vector2(0.0, -10.0),
+		dt : 1.0 / 60.0,
+		balls : [],
+		springs : []
+    };
+
+	function makeQuader(a,s,d,f,no_left=false,no_up=false){
+		if(!no_up){
+			scene.springs.push(new Spring(scene.balls[a], scene.balls[s], 50000.0, 1.0));
+		}
+
+		scene.springs.push(new Spring(scene.balls[s], scene.balls[d], 50000.0, 1.0));
+		scene.springs.push(new Spring(scene.balls[d], scene.balls[f], 50000.0, 1.0));
+
+		if (!no_left){
+			scene.springs.push(new Spring(scene.balls[f], scene.balls[a], 50000.0, 1.0));
+		}
+		//diagonals
+		scene.springs.push(new Spring(scene.balls[a], scene.balls[d], 10000.0, 1.0));
+		scene.springs.push(new Spring(scene.balls[s], scene.balls[f], 10000.0, 1.0));
+	}
+
+	function setup_scene(){
+		{
+			scene.balls = [];
+
+			for (var x = 1; x < 6; x++){
+				for (var y = 1; y < 6; y++){
+					scene.balls.push(new Ball(10, 0.1, new Vector2(x*2.0, y*2.0), new Vector2(10.0, 20.0)));
+				}
+			}
+
+			scene.balls.push(new Ball(50, 0.4, new Vector2(15.0, 17.0), new Vector2(5.0, 0.0)));
+			scene.balls.push(new Ball(40, 0.3, new Vector2(15.0, 19.0), new Vector2(0.0, 0.0)));
+			
+			scene.balls.push(new Ball(30, 0.2, new Vector2(20.0, 25.0), new Vector2(20.0, 10.0)));
+			scene.balls.push(new Ball(10, 0.2, new Vector2(15.0, 20.0), new Vector2(4.0, 10.0)));
+			scene.balls.push(new Ball(10, 0.2, new Vector2(20.0, 15.0), new Vector2(4.0, 10.0)));
+			scene.balls.push(new Ball(10, 0.2, new Vector2(25.0, 20.0), new Vector2(4.0, 10.0)));
+
+			scene.balls.push(new Ball(10, 0.2, new Vector2(15.0, 21.0), new Vector2(0.0, 0.0)));
+		}
+
+		{
+			scene.springs = [];
+
+			makeQuader(0,5,6,1);
+			makeQuader(5,10,11,6,no_left = true);
+			makeQuader(10,15,16,11,no_left = true);
+			makeQuader(15,20,21,16,no_left = true);
+			
+			makeQuader(1,6,7,2,no_left = false, no_up = true);
+			makeQuader(2,7,8,3,no_left = false, no_up = true);
+			makeQuader(3,8,9,4,no_left = false, no_up = true);
+
+			for (var i = 0; i < 3; i++){
+				for (var j = 0; j < 3; j++){
+					makeQuader(6+5*i+j,11+5*i+j,12+5*i+j,7+5*i+j,no_left = true, no_up = true);
+				}
+			}
+
+			scene.springs.push(new FixedSpring(new Vector2(15.0,15.0), scene.balls[25], 50000.0, 100.0));
+			scene.springs.push(new Spring(scene.balls[25], scene.balls[26], 50000.0, 100.0));
+			scene.springs.push(new Spring(scene.balls[31], scene.balls[26], 50000.0, 100.0));
+			
+
+			scene.springs.push(new Spring(scene.balls[27], scene.balls[28], 1000.0, 1.0));
+			scene.springs.push(new Spring(scene.balls[28], scene.balls[29], 1000.0, 1.0));
+			scene.springs.push(new Spring(scene.balls[29], scene.balls[30], 1000.0, 1.0));
+			scene.springs.push(new Spring(scene.balls[30], scene.balls[27], 1000.0, 1.0));
+			//diagonals
+			scene.springs.push(new Spring(scene.balls[27], scene.balls[29], 1000.0, 1.0));
+			scene.springs.push(new Spring(scene.balls[28], scene.balls[30], 1000.0, 1.0));
+		}
+	}
+
+	// drawing -------------------------------------------------------
+
+	function draw() {
+		c.clearRect(0, 0, canvas.width, canvas.height);
+
+		c.fillStyle = "#FF0000";
+
+		for (var i = 0; i < scene.balls.length; i++) {
+			scene.balls[i].draw();
+		}
+
+		for (var i = 0; i < scene.springs.length; i++) {
+			scene.springs[i].draw();
+		}
+	}
+
+	// simulation ----------------------------------------------------
+
+	function simulate() {
+		for (var i = 0; i < scene.balls.length; i++){
+			scene.balls[i].acc = new Vector2(0,0);			//init acc
+		}
+		
+		for (var i = 0; i < scene.springs.length; i++){
+			scene.springs[i].simulate();
+		}
+
+		for (var i = 0; i < scene.balls.length; i++){
+			scene.balls[i].acc.add(scene.gravity);
+			scene.balls[i].simulate(scene.dt);
+		}
+
+	}
+
+	// make browser to call us repeatedly -----------------------------------
+
+	function update() {
+		simulate();
+		draw();
+		requestAnimationFrame(update);
+	}
+	
+	setup_scene();
+	update();
+	
+</script> 
+</body>
+</html>
