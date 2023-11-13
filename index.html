@@ -27,13 +27,37 @@
 			return new Vector2(this.x, this.y);
 		}
 
+		// these 4 change this vector and return it
 		add(v, s = 1.0) {
 			this.x += v.x * s;
 			this.y += v.y * s;
 			return this;
 		}
 
-		sub(other) {
+		sub(v, s = 1.0) {
+			this.x -= v.x * s;
+			this.y -= v.y * s;
+			return this;
+		}
+
+		scale(s) {
+			this.x *= s;
+			this.y *= s;
+			return this;
+		}
+
+		div(s) {
+			this.x /= s;
+			this.y /= s;
+			return this;
+		}
+
+		// these 4 don't change this vector, but only return the result
+		plus(other){
+			return new Vector2(this.x+other.x,this.y+other.y);
+		}
+
+		minus(other) {
 			return new Vector2(this.x-other.x,this.y-other.y);
 		}
 
@@ -44,6 +68,7 @@
 		divide(scalar){
 			return new Vector2(this.x/scalar,this.y/scalar);
 		}
+
 
 		length() {
 			return Math.sqrt(this.x * this.x + this.y * this.y);
@@ -59,6 +84,7 @@
 	}
 
 	// canvas setup -------------------------------------------------------
+
 	{
 		var canvas = document.getElementById("myCanvas");
 		var c = canvas.getContext("2d");
@@ -80,22 +106,42 @@
 		}
 	}
 	
-	// CLASSES ------------------------------------------------------------
+	// physics classes ------------------------------------------------------------
 
-	class Ball {
+	class Particle {
         constructor(mass, radius, pos, vel, acc=new Vector2(0.0, 0.0), restitution=0.2) {
             this.radius = radius;
 			this.mass = mass;
 			this.restitution = restitution;
 			this.pos = pos.clone();
 			this.vel = vel.clone();
-			this.acc = acc.clone()
+			this.acc = acc.clone();
+			this.previous_pos = pos.clone();
         }
-        simulate(dt) 
+        simulate(dt, method = 'euler-cromer') 
         {
-			this.vel.add(this.acc, dt);
-			this.pos.add(this.vel, dt);
+			switch(method){
+				case 'euler-cromer':
+					// euler-cromer update
+					this.vel.add(this.acc, dt);
+					this.pos.add(this.vel, dt);
+					break;
+				
+				case 'euler':
+					// euler update
+					this.pos.add(this.vel, dt);
+					this.vel.add(this.acc, dt);
+					break;
 
+				case 'verlet': 
+					// verlet update
+					var pt = this.pos.clone();
+					this.pos = this.pos.times(2.0).minus(this.previous_pos).add(this.acc,dt**2);
+					this.previous_pos = pt.clone();
+					this.vel = this.pos.minus(this.previous_pos).divide(dt);
+					break;
+			}
+			
 			if (this.pos.x < 0.0) {
 				this.pos.x = 0.0;
 				this.vel.x = -this.vel.x;
@@ -108,10 +154,10 @@
 				this.pos.y = 0.0;
 				this.vel.y = -this.vel.y;
 			}
-			/*if (this.pos.y > simHeight) {
+			if (this.pos.y > simHeight) {
 				this.pos.y = simHeight;
 				this.vel.y = -this.vel.y;
-			}*/
+			}
         }
         draw() {
             c.beginPath();			
@@ -123,35 +169,32 @@
     }
 
 	class FixedSpring {
-		constructor(point, ball, stiffness=1.0, damping_par=1.0){
-			this.ball = ball;
+		constructor(point, particle, stiffness=1.0, damping_par=1.0){
+			this.particle = particle;
 			this.point = point;
 			this.stiffness = stiffness;
 			this.damping_par = damping_par;
-			this.length = point.sub(ball.pos).length();
+			this.length = point.minus(particle.pos).length();
 		}
 		simulate(){
-			var relative_pos = this.point.sub(this.ball.pos);
+			var relative_pos = this.point.minus(this.particle.pos);
 			var actual_length = relative_pos.length();
 			var normalized_dir = relative_pos.divide(actual_length);
-			var relative_vel = new Vector2(0.0, 0.0).sub(this.ball.vel);
+			var relative_vel = new Vector2(0.0, 0.0).minus(this.particle.vel);
 
 			var elastic_gen = this.stiffness/this.length * (actual_length - this.length);
 			var damping_gen = relative_vel.dot(normalized_dir) * this.damping_par;
-
-			//var elastic = new Vector2(0,0).add(normalized_dir,1/this.ball.mass * elastic_gen);
-			//var damping = new Vector2(0,0).add(normalized_dir, damping_gen * 1/this.ball.mass);
 			
-			var elastic = normalized_dir.times(1/this.ball.mass * elastic_gen);
-    		var damping = normalized_dir.times(damping_gen * 1/this.ball.mass);
+			var elastic = normalized_dir.times(1/this.particle.mass * elastic_gen);
+    		var damping = normalized_dir.times(damping_gen * 1/this.particle.mass);
 
-			var acc_ball = elastic.add(damping);
+			var acc_particle = elastic.add(damping);
 
-			this.ball.acc.add(acc_ball);
+			this.particle.acc.add(acc_particle);
 		}
 		draw(){
 			c.beginPath();
-			c.moveTo(cX(this.ball.pos), cY(this.ball.pos));
+			c.moveTo(cX(this.particle.pos), cY(this.particle.pos));
 			c.lineTo(cX(this.point), cY(this.point));
 			c.stroke();
 
@@ -165,115 +208,175 @@
 	}
 
 	class Spring {
-		constructor(ball1, ball2, stiffness=1.0, damping_par = 1.0){
-			this.ball1 = ball1;
-			this.ball2 = ball2;
+		constructor(particle1, particle2, stiffness=1.0, damping_par = 1.0){
+			this.particle1 = particle1;
+			this.particle2 = particle2;
 			this.stiffness = stiffness;
 			this.damping_par = damping_par;
-			this.length = ball2.pos.sub(ball1.pos).length();
+			this.length = particle2.pos.minus(particle1.pos).length();
 		}
 		simulate(){
-			var relative_pos = this.ball2.pos.sub(this.ball1.pos);
+			var relative_pos = this.particle2.pos.minus(this.particle1.pos);
 			var actual_length = relative_pos.length();
 			var normalized_dir1 = relative_pos.divide(actual_length);
 			var normalized_dir2 = relative_pos.divide(actual_length).times(-1.0);
-			var relative_vel = this.ball2.vel.sub(this.ball1.vel);
+			var relative_vel = this.particle2.vel.minus(this.particle1.vel);
 
 			var elastic_gen = this.stiffness/this.length * (actual_length - this.length);
 			var damping_gen = relative_vel.dot(normalized_dir1) * this.damping_par;
 
-			var acc_ball1 = normalized_dir1.times(1/this.ball1.mass * elastic_gen).add(normalized_dir1.times(damping_gen * 1/this.ball1.mass));
-			var acc_ball2 = normalized_dir2.times(1/this.ball2.mass * elastic_gen).add(normalized_dir2.times(damping_gen * 1/this.ball2.mass));
+			var acc_particle1 = normalized_dir1.times(1/this.particle1.mass * elastic_gen).add(normalized_dir1.times(damping_gen * 1/this.particle1.mass));
+			var acc_particle2 = normalized_dir2.times(1/this.particle2.mass * elastic_gen).add(normalized_dir2.times(damping_gen * 1/this.particle2.mass));
 
 
-			this.ball1.acc.add(acc_ball1);
-			this.ball2.acc.add(acc_ball2);
+			this.particle1.acc.add(acc_particle1);
+			this.particle2.acc.add(acc_particle2);
 		}
 		draw(){
 			c.beginPath();
-			c.moveTo(cX(this.ball1.pos), cY(this.ball1.pos));
-			c.lineTo(cX(this.ball2.pos), cY(this.ball2.pos));
+			c.moveTo(cX(this.particle1.pos), cY(this.particle1.pos));
+			c.lineTo(cX(this.particle2.pos), cY(this.particle2.pos));
 
 			c.stroke();
 		}
 	}
 
+	// physical objects -----------------------------------------------------------
+
+	class ElasticSquare {
+		constructor(side_length,pos=[1,1],scale=1.5,stiffness=20000.0,damping_par=10.0){
+			this.particles = [];
+			this.springs = [];
+			this.stiffness = stiffness;
+			this.damping_par = damping_par;
+
+			// setup particles
+			for (var x = pos[0]; x < pos[0]+side_length; x++){
+				for (var y = pos[1]; y < pos[1]+side_length; y++){
+					var ges = (y>pos[1]+side_length/2 && x>pos[0]+side_length/2)? new Vector2(10.0, 30.0):new Vector2(-10.0,30.0);
+					this.particles.push(new Particle(10, 0.1, new Vector2(x*scale, y*scale), ges));
+				}
+			}
+
+			// connect with springs
+			this.connect_to_quader(0,side_length,side_length+1,1);
+
+			for (var i = 1; i < side_length-1; i++){
+				this.connect_to_quader(side_length*i,side_length+side_length*i,side_length+1+side_length*i,1+side_length*i, true);
+				this.connect_to_quader(i,side_length+i,side_length+1+i,1+i,false,true);
+			}
+
+			for (var i = 1; i < side_length-1; i++){
+				for (var j = 1; j < side_length-1; j++){
+					this.connect_to_quader(side_length*i+j,side_length+side_length*i+j,side_length+1+side_length*i+j,1+side_length*i+j,true,true);
+				}
+			}
+		}
+
+		connect_to_quader(a,s,d,f,no_left=false,no_up=false){
+			if(!no_up){
+				this.springs.push(new Spring(this.particles[a], this.particles[s], this.stiffness, this.damping_par));
+			}
+
+			this.springs.push(new Spring(this.particles[s], this.particles[d], this.stiffness, this.damping_par));
+			this.springs.push(new Spring(this.particles[d], this.particles[f], this.stiffness, this.damping_par));
+
+			if (!no_left){
+				this.springs.push(new Spring(this.particles[f], this.particles[a], this.stiffness, this.damping_par));
+			}
+			//diagonals
+			this.springs.push(new Spring(this.particles[a], this.particles[d], this.stiffness, this.damping_par));
+			this.springs.push(new Spring(this.particles[s], this.particles[f], this.stiffness, this.damping_par));
+
+			//this.springs.push.apply(this.springs,springs);
+		}
+
+		simulate(gravity,dt,method='verlet'){
+			for (var i = 0; i < this.particles.length; i++){
+				this.particles[i].acc = new Vector2(0,0);			//reset acc
+				this.particles[i].acc.add(gravity);	//add gravity
+			}
+			
+			for (var i = 0; i < this.springs.length; i++){
+				this.springs[i].simulate();		//add spring accelaration
+			}
+
+			for (var i = 0; i < this.particles.length; i++){
+				this.particles[i].simulate(dt, method);	//simulate particles using specified method
+			}
+		}
+
+		draw(){
+			for (var i = 0; i < this.particles.length; i++) {
+				this.particles[i].draw();
+			}
+
+			for (var i = 0; i < this.springs.length; i++) {
+				this.springs[i].draw();
+			}
+		}
+	}
+	
 	// scene -------------------------------------------------------
 
 	var scene = {
 		gravity : new Vector2(0.0, -10.0),
 		dt : 1.0 / 60.0,
-		balls : [],
-		springs : []
+		particles : [],
+		springs : [],
+		objects : []
     };
 
-	function makeQuader(a,s,d,f,no_left=false,no_up=false){
-		if(!no_up){
-			scene.springs.push(new Spring(scene.balls[a], scene.balls[s], 50000.0, 1.0));
-		}
-
-		scene.springs.push(new Spring(scene.balls[s], scene.balls[d], 50000.0, 1.0));
-		scene.springs.push(new Spring(scene.balls[d], scene.balls[f], 50000.0, 1.0));
-
-		if (!no_left){
-			scene.springs.push(new Spring(scene.balls[f], scene.balls[a], 50000.0, 1.0));
-		}
-		//diagonals
-		scene.springs.push(new Spring(scene.balls[a], scene.balls[d], 10000.0, 1.0));
-		scene.springs.push(new Spring(scene.balls[s], scene.balls[f], 10000.0, 1.0));
-	}
-
 	function setup_scene(){
-		{
-			scene.balls = [];
+		var num = 0
+		// Setup Particles
+		{	
+			scene.particles = [];
 
-			for (var x = 1; x < 6; x++){
-				for (var y = 1; y < 6; y++){
-					scene.balls.push(new Ball(10, 0.1, new Vector2(x*2.0, y*2.0), new Vector2(10.0, 20.0)));
-				}
+			// Chaos Pendulum Particles
+			{
+				scene.particles.push(new Particle(50, 0.5, new Vector2(15.0, 17.0), new Vector2(5.0, 0.0)));
+				scene.particles.push(new Particle(40, 0.4, new Vector2(16.0, 19.0), new Vector2(15.0, 0.0)));
+				scene.particles.push(new Particle(30, 0.3, new Vector2(18.0, 20.0), new Vector2(5.0, 0.0)));
 			}
 
-			scene.balls.push(new Ball(50, 0.4, new Vector2(15.0, 17.0), new Vector2(5.0, 0.0)));
-			scene.balls.push(new Ball(40, 0.3, new Vector2(15.0, 19.0), new Vector2(0.0, 0.0)));
-			
-			scene.balls.push(new Ball(30, 0.2, new Vector2(20.0, 25.0), new Vector2(20.0, 10.0)));
-			scene.balls.push(new Ball(10, 0.2, new Vector2(15.0, 20.0), new Vector2(4.0, 10.0)));
-			scene.balls.push(new Ball(10, 0.2, new Vector2(20.0, 15.0), new Vector2(4.0, 10.0)));
-			scene.balls.push(new Ball(10, 0.2, new Vector2(25.0, 20.0), new Vector2(4.0, 10.0)));
-
-			scene.balls.push(new Ball(10, 0.2, new Vector2(15.0, 21.0), new Vector2(0.0, 0.0)));
+			// Single Quader Particles
+			{
+				scene.particles.push(new Particle(10, 0.2, new Vector2(20.0, 25.0), new Vector2(20.0, 10.0)));
+				scene.particles.push(new Particle(10, 0.2, new Vector2(15.0, 20.0), new Vector2(4.0, 10.0)));
+				scene.particles.push(new Particle(10, 0.2, new Vector2(20.0, 15.0), new Vector2(4.0, 10.0)));
+				scene.particles.push(new Particle(10, 0.2, new Vector2(25.0, 20.0), new Vector2(4.0, 10.0)));
+			}
 		}
 
-		{
+		// Setup Springs
+		{	
 			scene.springs = [];
 
-			makeQuader(0,5,6,1);
-			makeQuader(5,10,11,6,no_left = true);
-			makeQuader(10,15,16,11,no_left = true);
-			makeQuader(15,20,21,16,no_left = true);
-			
-			makeQuader(1,6,7,2,no_left = false, no_up = true);
-			makeQuader(2,7,8,3,no_left = false, no_up = true);
-			makeQuader(3,8,9,4,no_left = false, no_up = true);
-
-			for (var i = 0; i < 3; i++){
-				for (var j = 0; j < 3; j++){
-					makeQuader(6+5*i+j,11+5*i+j,12+5*i+j,7+5*i+j,no_left = true, no_up = true);
-				}
+			// Chaos Pendulum
+			{
+				scene.springs.push(new FixedSpring(new Vector2(15.0,15.0), scene.particles[num**2], 50000.0, 1000.0));
+				scene.springs.push(new Spring(scene.particles[num**2], scene.particles[num**2+1], 50000.0, 1000.0));
+				scene.springs.push(new Spring(scene.particles[num**2+1], scene.particles[num**2+2], 50000.0, 1000.0));
 			}
 
-			scene.springs.push(new FixedSpring(new Vector2(15.0,15.0), scene.balls[25], 50000.0, 100.0));
-			scene.springs.push(new Spring(scene.balls[25], scene.balls[26], 50000.0, 100.0));
-			scene.springs.push(new Spring(scene.balls[31], scene.balls[26], 50000.0, 100.0));
-			
+			// Single Quader
+			{
+				scene.springs.push(new Spring(scene.particles[num**2+3], scene.particles[num**2+4], 10000.0, 10.0));
+				scene.springs.push(new Spring(scene.particles[num**2+4], scene.particles[num**2+5], 10000.0, 10.0));
+				scene.springs.push(new Spring(scene.particles[num**2+5], scene.particles[num**2+6], 10000.0, 10.0));
+				scene.springs.push(new Spring(scene.particles[num**2+6], scene.particles[num**2+3], 10000.0, 10.0));
+				//diagonals
+				scene.springs.push(new Spring(scene.particles[num**2+3], scene.particles[num**2+5], 10000.0, 10.0));
+				scene.springs.push(new Spring(scene.particles[num**2+4], scene.particles[num**2+6], 10000.0, 10.0));
+			}
+		}
 
-			scene.springs.push(new Spring(scene.balls[27], scene.balls[28], 1000.0, 1.0));
-			scene.springs.push(new Spring(scene.balls[28], scene.balls[29], 1000.0, 1.0));
-			scene.springs.push(new Spring(scene.balls[29], scene.balls[30], 1000.0, 1.0));
-			scene.springs.push(new Spring(scene.balls[30], scene.balls[27], 1000.0, 1.0));
-			//diagonals
-			scene.springs.push(new Spring(scene.balls[27], scene.balls[29], 1000.0, 1.0));
-			scene.springs.push(new Spring(scene.balls[28], scene.balls[30], 1000.0, 1.0));
+		// Setup Objects
+		{
+			scene.objects = [];
+
+			scene.objects.push(new ElasticSquare(8,[4,2],1.5,26000,10));
 		}
 	}
 
@@ -284,8 +387,12 @@
 
 		c.fillStyle = "#FF0000";
 
-		for (var i = 0; i < scene.balls.length; i++) {
-			scene.balls[i].draw();
+		for (var i = 0; i < scene.objects.length; i++) {
+			scene.objects[i].draw();
+		}
+
+		for (var i = 0; i < scene.particles.length; i++) {
+			scene.particles[i].draw();
 		}
 
 		for (var i = 0; i < scene.springs.length; i++) {
@@ -295,20 +402,23 @@
 
 	// simulation ----------------------------------------------------
 
-	function simulate() {
-		for (var i = 0; i < scene.balls.length; i++){
-			scene.balls[i].acc = new Vector2(0,0);			//init acc
+	function simulate(method = 'verlet') {
+		for (var i = 0; i < scene.particles.length; i++){
+			scene.particles[i].acc = new Vector2(0,0);			//reset acc
+			scene.particles[i].acc.add(scene.gravity);	//add gravity
 		}
 		
+		for (var i = 0; i < scene.objects.length; i++){
+			scene.objects[i].simulate(scene.gravity,scene.dt,method);		//add spring accelaration
+		}
+
 		for (var i = 0; i < scene.springs.length; i++){
-			scene.springs[i].simulate();
+			scene.springs[i].simulate();		//add spring accelaration
 		}
 
-		for (var i = 0; i < scene.balls.length; i++){
-			scene.balls[i].acc.add(scene.gravity);
-			scene.balls[i].simulate(scene.dt);
+		for (var i = 0; i < scene.particles.length; i++){
+			scene.particles[i].simulate(scene.dt, method);	//simulate particles using specified method
 		}
-
 	}
 
 	// make browser to call us repeatedly -----------------------------------
@@ -320,6 +430,7 @@
 	}
 	
 	setup_scene();
+	simulate('euler-cromer');
 	update();
 	
 </script> 
