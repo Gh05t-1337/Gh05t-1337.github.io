@@ -1,2 +1,2 @@
-# gh05t-1337.github.io
+# SimpleElasticSolids
 simple spring simulation
